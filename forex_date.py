@@ -1,5 +1,6 @@
-import yfinance as yf
+# import yfinance as yf
 import pandas as pd
+from io import StringIO
 from datetime import datetime, timedelta
 import pytz
 import requests
@@ -39,6 +40,9 @@ def get_forex_rate_at_datetime(pair, target_datetime, api_key):
         start_date = target_datetime.strftime('%Y-%m-%d')
         end_date = (target_datetime + timedelta(days=1)).strftime('%Y-%m-%d')
 
+        # Download the data using yfinance
+        # data = yf.download(pair + '=X', start=start_date, end=end_date)
+
         # API key for FXmarketAPI
         # YzP2czMSdhFjGJo5hcI5
         # https://fxmarketapi.com/apipandas?currency=EURUSD,GBPUSD&start_date=2018-07-02&end_date=2018-09-03&interval=hourly&api_key=api_key
@@ -71,35 +75,22 @@ def get_forex_rate_at_datetime(pair, target_datetime, api_key):
         print(fx_api_str)
         response = requests.get(fx_api_str)
         print(response.text)
-        df = pd.read_json(response.text)
+        df = pd.read_json(StringIO(response.text))
 
         print(df)
-
-        # Download the data using yfinance
-        # data = yf.download(pair + '=X', start=start_date, end=end_date)
 
         if df.empty:
             print(f"No data found for {pair} on {start_date}.")
             return None
 
-        # # Rename the 'Adj Close' column to 'Close' for consistency
-        # if 'Adj Close' in data.columns:
-        #     data.rename(columns={'Adj Close': 'Close'}, inplace=True)
-
-        # # Convert the index to timezone-aware datetime objects (UTC)
-        # # data.index = data.index.tz_convert('UTC')
-
-        # # Find the closest time in the data
-        # closest_time = min(data.index, key=lambda x: abs(x - target_datetime))
-
-        # # Get the exchange rate at the closest time
-        # exchange_rate = data.loc[closest_time, 'Close']
+        # Get the exchange rate
+        exchange_rate = float(df.price.iloc[0])
 
         # print(f"Exchange rate for {pair} at {target_datetime.strftime('%Y-%m-%d %H:%M:%S')} (UTC):")
         # print(f"Closest available time: {closest_time.strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
         # print(f"Exchange rate: {exchange_rate:.4f}")
 
-        # return exchange_rate
+        return exchange_rate
 
     except ValueError as e:
         print(f"Error: {e}")
@@ -160,7 +151,7 @@ def test_forex_timepoint():
     Example usage of the get_forex_rate_at_datetime function.
     """
     currency_pair = "GBPEUR"  # GBP/EUR currency pair
-    target_datetime_str = "2020-12-19 15:18:00"  # Example date and time
+    target_datetime_str = "2020-12-16 15:18:00"  # Example date and time
     target_datetime_obj = datetime(2023, 7, 15, 12, 0, 0)
     api_key = 'YzP2czMSdhFjGJo5hcI5'
 
