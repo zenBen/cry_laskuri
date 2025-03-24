@@ -5,8 +5,9 @@ import openpyxl
 from openpyxl.utils.dataframe import dataframe_to_rows
 from datetime import datetime
 from copy import copy
+import forex_date as fd
 
-def process_trades_for_laskuri(coin, file_path):
+def process_trades_for_laskuri(coin, file_path, out_path):
     """
     Processes trade data from a CSV file, filters it by a specific coin,
     and converts it to a format suitable for Laskuri tax reporting.
@@ -19,12 +20,49 @@ def process_trades_for_laskuri(coin, file_path):
         str: The path to the processed CSV file.
     """
     try:
+        print(f"Processing coin: {coin}, looking for file at: {file_path}")
         # Load the dataset
         dataset = pd.read_csv(file_path)
 
+        # Ensure 'pair' column contains only strings and handle missing values
+        dataset['pair'] = dataset['pair'].astype(str).fillna('')
+
         # Filter for rows where 'pair' includes the specified coin
-        dataset['pair'] = dataset['pair'].astype(str)
         coin_data = dataset[dataset['pair'].str.contains(coin, na=False)]
+
+        # Check if any rows contain the requested coin
+        if coin_data.empty:
+            print(f"No trades found for coin: {coin}. Skipping...")
+            return None
+
+        # Check if the currency pair includes fiat that is not EUR
+        if not coin_data['pair'].str.contains('EUR').all():
+            for idx, row in coin_data.iterrows():
+                pair = row['pair']
+                if 'EUR' not in pair:
+                    # Extract the fiat currency (e.g., USD, GBP)
+                    fiat_currency = pair.replace(coin, '').replace('/', '').strip()
+                    target_datetime = pd.to_datetime(row['time'], errors='coerce').strftime('%Y-%m-%d %H:%M:%S')
+                    if pd.isnull(target_datetime):
+                        print(f"Invalid datetime format for row: {row}")
+                        continue
+
+                    # Get the forex rate for the fiat currency to EUR
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    with open(os.path.join(script_dir, '.fx_api_key'), 'r') as key_file:
+                        api_key = key_file.read().strip()
+                    forex_rate = fd.get_forex_rate_at_datetime(f"{fiat_currency}EUR", target_datetime, api_key)
+                    if forex_rate is not None:
+                        print(f"Exchange rate: {forex_rate:.4f}")
+
+                    if forex_rate is not None:
+                        # Convert the price and total to EUR
+                        coin_data.at[idx, 'price'] = row['price'] * forex_rate
+                        coin_data.at[idx, 'cost'] = row['cost'] * forex_rate
+                    else:
+                        print(f"Could not retrieve forex rate for {fiat_currency} to EUR at {target_datetime}.")
+                        coin_data.at[idx, 'price'] = None
+                        coin_data.at[idx, 'cost'] = None
 
         # Convert to the required format
         converted_data = pd.DataFrame({
@@ -132,7 +170,7 @@ def process_trades_for_laskuri(coin, file_path):
 
         # Save the final processed file
         processed_file_name = f'processed_trades_{coin}.csv'
-        processed_file_path = os.path.join(os.path.dirname(file_path), processed_file_name)  # saves to the same dir as the input file
+        processed_file_path = os.path.join(out_path, processed_file_name)
         converted_data.to_csv(processed_file_path, index=False)
 
         return processed_file_path
@@ -164,7 +202,8 @@ def csv_to_xlsx_for_laskuri(coin, csv_file_name):
         xlsx_file_name = f"vero_laskuri_{coin}.xlsx"
 
         # Load the template workbook
-        template_file = "vero_laskuri_template.xlsx"
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        template_file = os.path.join(script_dir, "vero_laskuri_template.xlsx")
         if not os.path.exists(template_file):
             raise FileNotFoundError(f"Could not find the template file: {template_file}")
         wb = openpyxl.load_workbook(template_file)
@@ -215,7 +254,7 @@ def csv_to_xlsx_for_laskuri(coin, csv_file_name):
             cell.font = data['font']
 
         # Save the new workbook
-        wb.save(xlsx_file_name)
+        wb.save(os.path.join(os.path.dirname(csv_file_name), xlsx_file_name))
 
         print(f"Successfully converted '{csv_file_name}' to '{xlsx_file_name}'")
 
@@ -226,25 +265,32 @@ def csv_to_xlsx_for_laskuri(coin, csv_file_name):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2 or len(sys.argv) > 3:
+    if len(sys.argv) > 3:
         print("Usage: python trades_to_laskuri_xl.py <coin> [<file_path>]")
         print("  <coin>: The cryptocurrency to filter by (e.g., BTC, LTC, XMR).")
         print("  <file_path>: (Optional) The path to the trades CSV file. Defaults to current directory.")
         sys.exit(1)
 
-    coin = sys.argv[1]
-    
     if len(sys.argv) == 3:
         file_path = sys.argv[2]
     else:
-        file_path = os.path.join(os.getcwd(), "trades.csv")  # Default to current directory/trades.csv
+        file_path = os.path.join(os.getcwd(), "data", "trades.csv")  # Default to current directory/trades.csv
 
-    csv_file_name = f"processed_trades_{coin}.csv"
-    if not os.path.exists(csv_file_name):
-        result_path = process_trades_for_laskuri(coin, file_path)
-        if result_path:
-            print(f"Trades data converted to vero laskuri csv & xl and saved to: {result_path}")
-    # raise FileNotFoundError(f"Could not find {csv_file_name} in the current directory.")
+    if len(sys.argv) < 2:
+        coins = ['BCH', 'BSV', 'BTC', 'ETC', 'ETH', 'LTC', 'REP', 'XLM', 'XMR', 'XRP', 'ZEC']
+    else:
+        coins = [sys.argv[1]]
 
-    csv_to_xlsx_for_laskuri(coin, csv_file_name)
+    for coin in coins:  # Add a loop to process each coin
+        csv_file_name = os.path.join(os.getcwd(), "output", f"processed_trades_{coin}.csv")
+        if not os.path.exists(csv_file_name):
+            if not os.path.exists(file_path):
+                print(f"Error: File not found at path: {file_path}")
+                sys.exit(1)
+            result_path = process_trades_for_laskuri(coin, file_path, os.path.join(os.getcwd(), "output"))
+            if result_path:
+                print(f"Trades data converted to vero laskuri csv & xl and saved to: {result_path}")
+        # raise FileNotFoundError(f"Could not find {csv_file_name} in the current directory.")
+
+        csv_to_xlsx_for_laskuri(coin, csv_file_name)
 

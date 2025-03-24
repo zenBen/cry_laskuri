@@ -36,11 +36,21 @@ def get_forex_rate_at_datetime(pair, target_datetime, api_key):
         else:
             target_datetime = target_datetime.astimezone(pytz.utc)
 
-        # Get the daily date and then find the closest time.
-        start_date = target_datetime.strftime('%Y-%m-%d')
-        end_date = (target_datetime + timedelta(days=1)).strftime('%Y-%m-%d')
-
+        # Check if the target datetime is a weekday or weekend
+        if target_datetime.weekday() >= 5:  # 5 = Sat, 6 = Sun
+            print("The target datetime falls on a weekend.")
+            # Set lastfx_datetime to midnight of the Friday before
+            lastfx_datetime = target_datetime - timedelta(days=target_datetime.weekday() - 4)
+            lastfx_datetime = lastfx_datetime.replace(hour=23, minute=59, second=59, microsecond=0)
+            print(f"Using last available forex datetime: {lastfx_datetime}")
+            getfx_datetime = lastfx_datetime
+        else:
+            getfx_datetime = target_datetime
+            
         # Download the data using yfinance
+        # # Get the daily date and then find the closest time.
+        # start_date = target_datetime.strftime('%Y-%m-%d')
+        # end_date = (target_datetime + timedelta(days=1)).strftime('%Y-%m-%d')
         # data = yf.download(pair + '=X', start=start_date, end=end_date)
 
         # API key for FXmarketAPI
@@ -67,7 +77,7 @@ def get_forex_rate_at_datetime(pair, target_datetime, api_key):
                     '?' +
                     'currency=' + pair +
                     '&' +
-                    'date=' + target_datetime.strftime('%Y-%m-%d-%H:%M') + 
+                    'date=' + getfx_datetime.strftime('%Y-%m-%d-%H:%M') + 
                     '&' +
                     'interval=' + 'minute' + 
                     '&' +
@@ -77,18 +87,14 @@ def get_forex_rate_at_datetime(pair, target_datetime, api_key):
         print(response.text)
         df = pd.read_json(StringIO(response.text))
 
-        print(df)
-
         if df.empty:
-            print(f"No data found for {pair} on {start_date}.")
+            print(f"No data found for {pair} on {target_datetime.strftime('%Y-%m-%d-%H:%M')}.")
             return None
+
+        print(df)
 
         # Get the exchange rate
         exchange_rate = float(df.price.iloc[0])
-
-        # print(f"Exchange rate for {pair} at {target_datetime.strftime('%Y-%m-%d %H:%M:%S')} (UTC):")
-        # print(f"Closest available time: {closest_time.strftime('%Y-%m-%d %H:%M:%S')} (UTC)")
-        # print(f"Exchange rate: {exchange_rate:.4f}")
 
         return exchange_rate
 
@@ -151,9 +157,10 @@ def test_forex_timepoint():
     Example usage of the get_forex_rate_at_datetime function.
     """
     currency_pair = "GBPEUR"  # GBP/EUR currency pair
-    target_datetime_str = "2020-12-16 15:18:00"  # Example date and time
+    target_datetime_str = "2020-12-19 15:18:00"  # Example date and time
     target_datetime_obj = datetime(2023, 7, 15, 12, 0, 0)
-    api_key = 'YzP2czMSdhFjGJo5hcI5'
+    with open('.fx_api_key', 'r') as key_file:
+        api_key = key_file.read().strip()
 
     # Example usage with string
     exchange_rate = get_forex_rate_at_datetime(currency_pair, target_datetime_str, api_key)
